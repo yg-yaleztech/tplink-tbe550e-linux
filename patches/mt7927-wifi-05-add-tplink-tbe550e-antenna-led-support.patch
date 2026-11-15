@@ -1,0 +1,473 @@
+wifi: mt76: mt7925: add TP-Link Archer TBE550E antenna LED support
+
+The TP-Link Archer TBE550E (MT7927, PCI 14c3:7927, subsystem 105b:e104)
+has a magnetic antenna base with a light ring. TP-Link's Windows driver
+(mtkwecx.sys) drives it only for this card: its INF sets OemLedMode=2,
+which selects unified MCU command 0x2a on two GPIO pins hardcoded in the
+MT7927 chip profile, pin1=53 and pin2=54. Tag 0 enables a pin, tag 1 sets
+its value (1 or 3); four mode combinations are used.
+
+Observed on hardware with TP-Link's firmware (WM build 20250606201037):
+mode 0 = off, 1 = breathing, 2 and 3 = steady. With a 2026 firmware build
+modes 2/3 did not give a steady light. Colour and the on/off touch switch
+are handled by the base itself.
+
+- Add MCU_UNI_CMD_TPLINK_GPIO (0x2a).
+- Detect subsystem 105b:e104; module parameters can disable it or
+  override the pins.
+- Enable both pins on hardware init and restore them on resume.
+- Auto mode: steady while associated, breathing otherwise, as TP-Link
+  documents for Windows. Redundant updates during association are
+  skipped.
+- Manual modes are never overridden by link changes or interface stop.
+- sysfs: tplink_led_mode (0-3, auto) and tplink_led_pins.
+- tplink_led_debug: request a firmware ACK and log it (runtime only).
+- Wake the chip before sysfs-triggered MCU commands.
+
+Developed with AI assistance (Claude). Tested by the submitter on a
+TBE550E with this package tree (v2.17-2, mt76 from Linux 7.3) built for
+kernel 7.0 on Ubuntu 24.04: associates first try, auto mode is steady
+while connected, and modes 0/1/2 give off/breathing/steady.
+
+diff --git mt76_connac_mcu.h tmp/claude-1000/-home-yaisel-gonzalez/9be0cb5b-6d1e-42a4-b0d0-81c121b42737/scratchpad/up73/b04/ours/mt76_connac_mcu.h
+index 0ededa5..93855d6 100644
+--- a/mt76_connac_mcu.h
++++ tmp/claude-1000/-home-yaisel-gonzalez/9be0cb5b-6d1e-42a4-b0d0-81c121b42737/scratchpad/up73/b04/ours/mt76_connac_mcu.h
+@@ -1337,6 +1337,7 @@ enum {
+ 	MCU_UNI_CMD_SR = 0x25,
+ 	MCU_UNI_CMD_ROC = 0x27,
+ 	MCU_UNI_CMD_SET_DBDC_PARMS = 0x28,
++	MCU_UNI_CMD_TPLINK_GPIO = 0x2a,
+ 	MCU_UNI_CMD_TXPOWER = 0x2b,
+ 	MCU_UNI_CMD_SET_POWER_LIMIT = 0x2c,
+ 	MCU_UNI_CMD_EFUSE_CTRL = 0x2d,
+diff --git mt7925/init.c tmp/claude-1000/-home-yaisel-gonzalez/9be0cb5b-6d1e-42a4-b0d0-81c121b42737/scratchpad/up73/b04/ours/mt7925/init.c
+index cd22fcc..c0922f2 100644
+--- a/mt7925/init.c
++++ tmp/claude-1000/-home-yaisel-gonzalez/9be0cb5b-6d1e-42a4-b0d0-81c121b42737/scratchpad/up73/b04/ours/mt7925/init.c
+@@ -126,6 +126,8 @@ static int __mt7925_init_hardware(struct mt792x_dev *dev)
+ 		}
+ 	}
+ 
++	mt7925_mcu_tplink_led_init(dev);
++
+ out:
+ 	return ret;
+ }
+diff --git mt7925/main.c tmp/claude-1000/-home-yaisel-gonzalez/9be0cb5b-6d1e-42a4-b0d0-81c121b42737/scratchpad/up73/b04/ours/mt7925/main.c
+index 8b89aa5..ae9a0cc 100644
+--- a/mt7925/main.c
++++ tmp/claude-1000/-home-yaisel-gonzalez/9be0cb5b-6d1e-42a4-b0d0-81c121b42737/scratchpad/up73/b04/ours/mt7925/main.c
+@@ -2126,6 +2126,8 @@ static void mt7925_vif_cfg_changed(struct ieee80211_hw *hw,
+ 
+ 		if (ieee80211_vif_is_mld(vif))
+ 			mvif->mlo_pm_state = MT792x_MLO_LINK_ASSOC;
++
++		mt7925_tplink_led_update(dev, vif);
+ 	}
+ 
+ 	if (changed & BSS_CHANGED_ARP_FILTER) {
+@@ -2215,6 +2217,8 @@ static void mt7925_link_info_changed(struct ieee80211_hw *hw,
+ 	if (changed & BSS_CHANGED_CQM)
+ 		mt7925_mcu_set_rssimonitor(dev, vif);
+ 
++	mt7925_tplink_led_update(dev, vif);
++
+ 	mt792x_mutex_release(dev);
+ }
+ 
+@@ -2735,6 +2739,12 @@ static void mt7925_stop(struct ieee80211_hw *hw, bool suspend)
+ 
+ 	cancel_delayed_work_sync(&dev->mlo_pm_work);
+ 
++	if (dev->tplink_led && !dev->tplink_led_manual) {
++		mt792x_mutex_acquire(dev);
++		mt7925_mcu_tplink_led_set_mode(dev, 0);
++		mt792x_mutex_release(dev);
++	}
++
+ 	mt792x_stop(hw, suspend);
+ }
+ 
+diff --git mt7925/mcu.c tmp/claude-1000/-home-yaisel-gonzalez/9be0cb5b-6d1e-42a4-b0d0-81c121b42737/scratchpad/up73/b04/ours/mt7925/mcu.c
+index 747a729..2b0c6be 100644
+--- a/mt7925/mcu.c
++++ tmp/claude-1000/-home-yaisel-gonzalez/9be0cb5b-6d1e-42a4-b0d0-81c121b42737/scratchpad/up73/b04/ours/mt7925/mcu.c
+@@ -3,6 +3,7 @@
+ 
+ #include <linux/fs.h>
+ #include <linux/firmware.h>
++#include <linux/pci.h>
+ #include "mt7925.h"
+ #include "regd.h"
+ #include "mcu.h"
+@@ -4246,3 +4247,316 @@ int mt7925_mcu_set_rssimonitor(struct mt792x_dev *dev, struct ieee80211_vif *vif
+ 	return mt76_mcu_send_msg(&dev->mt76, MCU_UNI_CMD(RSSI_MONITOR), &req,
+ 				 sizeof(req), false);
+ }
++
++static int tplink_led_override = -1;
++module_param_named(tplink_led, tplink_led_override, int, 0644);
++MODULE_PARM_DESC(tplink_led, "TP-Link LED support: -1=auto (default), 0=disabled, 1=force enabled");
++
++static int tplink_led_pin1_override = -1;
++module_param_named(tplink_led_pin1, tplink_led_pin1_override, int, 0644);
++MODULE_PARM_DESC(tplink_led_pin1, "TP-Link LED pin 1 override (-1=auto)");
++
++static int tplink_led_pin2_override = -1;
++module_param_named(tplink_led_pin2, tplink_led_pin2_override, int, 0644);
++MODULE_PARM_DESC(tplink_led_pin2, "TP-Link LED pin 2 override (-1=auto)");
++
++/* Set at runtime only: a firmware that never answers would time out and reset the chip */
++static bool tplink_led_debug;
++module_param_named(tplink_led_debug, tplink_led_debug, bool, 0644);
++MODULE_PARM_DESC(tplink_led_debug, "TP-Link LED: request firmware ACK and log the response");
++
++struct mt7925_tplink_gpio_req {
++	u8 pin;
++	u8 rsv1[3];
++	__le32 tag;
++	u8 val;
++	u8 rsv2[3];
++} __packed;
++
++static int mt7925_mcu_tplink_gpio_ctrl(struct mt792x_dev *dev, u8 pin, u32 tag, u8 val)
++{
++	struct mt7925_tplink_gpio_req req = {
++		.pin = pin,
++		.tag = cpu_to_le32(tag),
++		.val = val,
++	};
++	struct sk_buff *skb;
++	int ret;
++
++	if (!tplink_led_debug)
++		return mt76_mcu_send_msg(&dev->mt76, MCU_UNI_CMD(TPLINK_GPIO),
++					 &req, sizeof(req), false);
++
++	ret = mt76_mcu_send_and_get_msg(&dev->mt76, MCU_UNI_CMD(TPLINK_GPIO),
++					&req, sizeof(req), true, &skb);
++	dev_info(dev->mt76.dev, "TP-Link LED cmd pin=%u tag=0x%x val=%u ret=%d\n",
++		 pin, tag, val, ret);
++	if (!ret && skb) {
++		print_hex_dump(KERN_INFO, "tplink_led rsp: ", DUMP_PREFIX_OFFSET,
++			       16, 1, skb->data, min_t(int, skb->len, 64), false);
++		dev_kfree_skb(skb);
++	}
++
++	return ret;
++}
++
++int mt7925_mcu_tplink_led_set_mode(struct mt792x_dev *dev, u8 mode)
++{
++	u8 val1, val2;
++	int ret;
++
++	if (!dev->tplink_led)
++		return 0;
++
++	switch (mode) {
++	case 1: /* Connected - Static */
++		val1 = 1;
++		val2 = 3;
++		break;
++	case 2: /* 320 MHz - Spectrum */
++		val1 = 3;
++		val2 = 1;
++		break;
++	case 3: /* MLO - Spectrum */
++		val1 = 3;
++		val2 = 3;
++		break;
++	case 0: /* Disconnected - Breathing */
++	default:
++		mode = 0;
++		val1 = 1;
++		val2 = 1;
++		break;
++	}
++
++	ret = mt7925_mcu_tplink_gpio_ctrl(dev, dev->tplink_led_pin1, 0x80001, val1);
++	if (ret)
++		return ret;
++
++	ret = mt7925_mcu_tplink_gpio_ctrl(dev, dev->tplink_led_pin2, 0x80001, val2);
++	if (ret)
++		return ret;
++
++	dev->tplink_led_mode = mode;
++	return 0;
++}
++EXPORT_SYMBOL_GPL(mt7925_mcu_tplink_led_set_mode);
++
++void mt7925_tplink_led_update(struct mt792x_dev *dev, struct ieee80211_vif *vif)
++{
++	u8 mode = 1;
++
++	if (!dev->tplink_led || dev->tplink_led_manual)
++		return;
++
++	/* With the TP-Link firmware, observed on hardware: 0 = off, 1 = breathing,
++	 * 2 and 3 = steady. Like Windows: steady while connected, breathing otherwise.
++	 */
++	if (vif && vif->cfg.assoc)
++		mode = 2;
++
++	/* bss changes fire repeatedly during association; skip redundant MCU traffic */
++	if (mode == dev->tplink_led_mode)
++		return;
++
++	mt7925_mcu_tplink_led_set_mode(dev, mode);
++}
++EXPORT_SYMBOL_GPL(mt7925_tplink_led_update);
++
++static void mt7925_tplink_led_iter(void *data, u8 *mac, struct ieee80211_vif *vif)
++{
++	bool *assoc = data;
++
++	if (vif->type == NL80211_IFTYPE_STATION && vif->cfg.assoc)
++		*assoc = true;
++}
++
++/* Re-evaluate the link state when switching back to auto mode */
++static void mt7925_tplink_led_refresh(struct mt792x_dev *dev)
++{
++	bool assoc = false;
++
++	ieee80211_iterate_active_interfaces_atomic(mt76_hw(dev),
++						   IEEE80211_IFACE_ITER_RESUME_ALL,
++						   mt7925_tplink_led_iter, &assoc);
++	mt7925_mcu_tplink_led_set_mode(dev, assoc ? 2 : 1);
++}
++
++void mt7925_mcu_tplink_led_resume(struct mt792x_dev *dev)
++{
++	if (!dev->tplink_led)
++		return;
++
++	mt7925_mcu_tplink_gpio_ctrl(dev, dev->tplink_led_pin1, 0x80000, 1);
++	mt7925_mcu_tplink_gpio_ctrl(dev, dev->tplink_led_pin2, 0x80000, 1);
++	mt7925_mcu_tplink_led_set_mode(dev, dev->tplink_led_mode);
++}
++EXPORT_SYMBOL_GPL(mt7925_mcu_tplink_led_resume);
++
++static ssize_t tplink_led_mode_show(struct device *device,
++				    struct device_attribute *attr,
++				    char *buf)
++{
++	struct mt76_dev *mdev = dev_get_drvdata(device);
++	struct mt792x_dev *dev = container_of(mdev, struct mt792x_dev, mt76);
++
++	if (!dev->tplink_led)
++		return sysfs_emit(buf, "disabled\n");
++
++	return sysfs_emit(buf,
++			  "mode: %u (%s) [%s]\n"
++			  "pins: pin1=%u pin2=%u\n"
++			  "modes: 0=off, 1=breathing, 2=steady, 3=steady, auto (steady while connected)\n",
++			  dev->tplink_led_mode,
++			  dev->tplink_led_mode == 0 ? "off" :
++			  dev->tplink_led_mode == 1 ? "breathing" :
++			  dev->tplink_led_mode == 2 ? "steady" :
++			  dev->tplink_led_mode == 3 ? "steady" : "unknown",
++			  dev->tplink_led_manual ? "manual" : "auto",
++			  dev->tplink_led_pin1, dev->tplink_led_pin2);
++}
++
++static ssize_t tplink_led_mode_store(struct device *device,
++				     struct device_attribute *attr,
++				     const char *buf, size_t count)
++{
++	struct mt76_dev *mdev = dev_get_drvdata(device);
++	struct mt792x_dev *dev = container_of(mdev, struct mt792x_dev, mt76);
++	u8 mode;
++	int ret;
++
++	if (!dev->tplink_led)
++		return -ENODEV;
++
++	if (sysfs_streq(buf, "auto")) {
++		dev->tplink_led_manual = false;
++		mt792x_mutex_acquire(dev);
++		mt7925_tplink_led_refresh(dev);
++		mt792x_mutex_release(dev);
++		return count;
++	}
++
++	ret = kstrtou8(buf, 0, &mode);
++	if (ret)
++		return ret;
++
++	if (mode > 3)
++		return -EINVAL;
++
++	dev->tplink_led_manual = true;
++	mt792x_mutex_acquire(dev);
++	ret = mt7925_mcu_tplink_led_set_mode(dev, mode);
++	mt792x_mutex_release(dev);
++	return ret ? ret : count;
++}
++static DEVICE_ATTR_RW(tplink_led_mode);
++
++static ssize_t tplink_led_pins_show(struct device *device,
++				    struct device_attribute *attr,
++				    char *buf)
++{
++	struct mt76_dev *mdev = dev_get_drvdata(device);
++	struct mt792x_dev *dev = container_of(mdev, struct mt792x_dev, mt76);
++
++	return sysfs_emit(buf, "%u %u\n", dev->tplink_led_pin1, dev->tplink_led_pin2);
++}
++
++static ssize_t tplink_led_pins_store(struct device *device,
++				     struct device_attribute *attr,
++				     const char *buf, size_t count)
++{
++	struct mt76_dev *mdev = dev_get_drvdata(device);
++	struct mt792x_dev *dev = container_of(mdev, struct mt792x_dev, mt76);
++	unsigned int p1, p2;
++
++	if (sscanf(buf, "%u %u", &p1, &p2) != 2)
++		return -EINVAL;
++
++	dev->tplink_led_pin1 = (u8)p1;
++	dev->tplink_led_pin2 = (u8)p2;
++	mt792x_mutex_acquire(dev);
++	mt7925_mcu_tplink_gpio_ctrl(dev, (u8)p1, 0x80000, 1);
++	mt7925_mcu_tplink_gpio_ctrl(dev, (u8)p2, 0x80000, 1);
++	mt7925_mcu_tplink_led_set_mode(dev, dev->tplink_led_mode);
++	mt792x_mutex_release(dev);
++
++	return count;
++}
++static DEVICE_ATTR_RW(tplink_led_pins);
++
++int mt7925_mcu_tplink_led_init(struct mt792x_dev *dev)
++{
++	struct pci_dev *pdev = NULL;
++	bool match = false;
++	u8 pin1 = 0, pin2 = 0;
++	int ret;
++
++	if (tplink_led_override == 0)
++		return 0;
++
++	if (dev_is_pci(dev->mt76.dev)) {
++		pdev = to_pci_dev(dev->mt76.dev);
++		if (pdev->subsystem_vendor == 0x105b && pdev->subsystem_device == 0xe104)
++			match = true;
++	}
++
++	if (tplink_led_override == 1)
++		match = true;
++
++	if (!match)
++		return 0;
++
++	if (tplink_led_pin1_override >= 0)
++		pin1 = (u8)tplink_led_pin1_override;
++	if (tplink_led_pin2_override >= 0)
++		pin2 = (u8)tplink_led_pin2_override;
++
++	/* Hardcoded in the mtkwecx.sys MT7927 chip profile: pin1=53, pin2=54 */
++	if (!pin1 && !pin2) {
++		pin1 = 53;
++		pin2 = 54;
++	}
++
++	dev->tplink_led_pin1 = pin1;
++	dev->tplink_led_pin2 = pin2;
++	dev->tplink_led = true;
++	dev->tplink_led_manual = false;
++
++	dev_info(dev->mt76.dev,
++		 "TP-Link Archer TBE550E RGB LED initialized (GPIO pin1=%u, pin2=%u)\n",
++		 pin1, pin2);
++
++	/* Enable both GPIO pins */
++	ret = mt7925_mcu_tplink_gpio_ctrl(dev, pin1, 0x80000, 1);
++	if (ret)
++		dev_warn(dev->mt76.dev, "Failed to enable LED pin1: %d\n", ret);
++
++	ret = mt7925_mcu_tplink_gpio_ctrl(dev, pin2, 0x80000, 1);
++	if (ret)
++		dev_warn(dev->mt76.dev, "Failed to enable LED pin2: %d\n", ret);
++
++	/* Set initial mode: 0 (Breathing / Standby) */
++	mt7925_mcu_tplink_led_set_mode(dev, 0);
++
++	ret = device_create_file(dev->mt76.dev, &dev_attr_tplink_led_mode);
++	if (ret)
++		dev_warn(dev->mt76.dev, "Failed to create tplink_led_mode sysfs: %d\n", ret);
++
++	ret = device_create_file(dev->mt76.dev, &dev_attr_tplink_led_pins);
++	if (ret)
++		dev_warn(dev->mt76.dev, "Failed to create tplink_led_pins sysfs: %d\n", ret);
++
++	return 0;
++}
++EXPORT_SYMBOL_GPL(mt7925_mcu_tplink_led_init);
++
++void mt7925_mcu_tplink_led_exit(struct mt792x_dev *dev)
++{
++	if (!dev->tplink_led)
++		return;
++
++	device_remove_file(dev->mt76.dev, &dev_attr_tplink_led_mode);
++	device_remove_file(dev->mt76.dev, &dev_attr_tplink_led_pins);
++	dev->tplink_led = false;
++}
++EXPORT_SYMBOL_GPL(mt7925_mcu_tplink_led_exit);
+diff --git mt7925/mt7925.h tmp/claude-1000/-home-yaisel-gonzalez/9be0cb5b-6d1e-42a4-b0d0-81c121b42737/scratchpad/up73/b04/ours/mt7925/mt7925.h
+index 321e732..ac79cc9 100644
+--- a/mt7925/mt7925.h
++++ tmp/claude-1000/-home-yaisel-gonzalez/9be0cb5b-6d1e-42a4-b0d0-81c121b42737/scratchpad/up73/b04/ours/mt7925/mt7925.h
+@@ -414,4 +414,10 @@ int mt7925_testmode_dump(struct ieee80211_hw *hw, struct sk_buff *msg,
+ 			 struct netlink_callback *cb, void *data, int len);
+ 
+ int mt7925_mcu_set_rssimonitor(struct mt792x_dev *dev, struct ieee80211_vif *vif);
++
++int mt7925_mcu_tplink_led_init(struct mt792x_dev *dev);
++void mt7925_mcu_tplink_led_exit(struct mt792x_dev *dev);
++int mt7925_mcu_tplink_led_set_mode(struct mt792x_dev *dev, u8 mode);
++void mt7925_tplink_led_update(struct mt792x_dev *dev, struct ieee80211_vif *vif);
++void mt7925_mcu_tplink_led_resume(struct mt792x_dev *dev);
+ #endif
+diff --git mt7925/pci.c tmp/claude-1000/-home-yaisel-gonzalez/9be0cb5b-6d1e-42a4-b0d0-81c121b42737/scratchpad/up73/b04/ours/mt7925/pci.c
+index 02ef09d..2ec63b8 100644
+--- a/mt7925/pci.c
++++ tmp/claude-1000/-home-yaisel-gonzalez/9be0cb5b-6d1e-42a4-b0d0-81c121b42737/scratchpad/up73/b04/ours/mt7925/pci.c
+@@ -725,6 +725,7 @@ static void mt7925_pci_remove(struct pci_dev *pdev)
+ 	struct mt76_dev *mdev = pci_get_drvdata(pdev);
+ 	struct mt792x_dev *dev = container_of(mdev, struct mt792x_dev, mt76);
+ 
++	mt7925_mcu_tplink_led_exit(dev);
+ 	set_bit(MT76_REMOVED, &mdev->phy.state);
+ 	mt7925e_unregister_device(dev);
+ 	devm_free_irq(&pdev->dev, pdev->irq, dev);
+@@ -878,6 +879,7 @@ static int _mt7925_pci_resume(struct device *device, bool restore)
+ 		mt7925_mcu_set_deep_sleep(dev, false);
+ 
+ 	mt7925_mcu_regd_update(dev, mdev->alpha2, dev->country_ie_env);
++	mt7925_mcu_tplink_led_resume(dev);
+ failed:
+ 	pm->suspended = false;
+ 
+diff --git mt792x.h tmp/claude-1000/-home-yaisel-gonzalez/9be0cb5b-6d1e-42a4-b0d0-81c121b42737/scratchpad/up73/b04/ours/mt792x.h
+index 9efc251..05b9837 100644
+--- a/mt792x.h
++++ tmp/claude-1000/-home-yaisel-gonzalez/9be0cb5b-6d1e-42a4-b0d0-81c121b42737/scratchpad/up73/b04/ours/mt792x.h
+@@ -339,6 +339,13 @@ struct mt792x_dev {
+ 
+ 	struct ieee80211_chanctx_conf *new_ctx;
+ 
++	/* TP-Link Archer TBE550E RGB LED control */
++	bool tplink_led:1;
++	bool tplink_led_manual:1;
++	u8 tplink_led_pin1;
++	u8 tplink_led_pin2;
++	u8 tplink_led_mode;
++
+ 	struct ieee80211_vif *nan_vif;
+ 	const struct ieee80211_iface_combination *iface_combinations;
+ 	int n_iface_combinations;

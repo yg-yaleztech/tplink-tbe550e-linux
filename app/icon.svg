@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- "Halo": the TBE550E magnetic antenna base with its light ring.
+       Original artwork for this project; not a TP-Link mark. -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1C2433"/>
+      <stop offset="1" stop-color="#090C12"/>
+    </linearGradient>
+    <linearGradient id="tileEdge" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.16"/>
+      <stop offset="0.4" stop-color="#FFFFFF" stop-opacity="0.03"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- light spilling onto the desk -->
+    <radialGradient id="spill" cx="256" cy="372" r="210" gradientUnits="userSpaceOnUse"
+                    gradientTransform="translate(0 372) scale(1 0.38) translate(0 -372)">
+      <stop offset="0" stop-color="#22D3EE" stop-opacity="0.50"/>
+      <stop offset="0.5" stop-color="#6366F1" stop-opacity="0.20"/>
+      <stop offset="1" stop-color="#8B5CF6" stop-opacity="0"/>
+    </radialGradient>
+
+    <linearGradient id="ring" x1="120" y1="0" x2="392" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#22D3EE"/>
+      <stop offset="0.5" stop-color="#60A5FA"/>
+      <stop offset="1" stop-color="#A78BFA"/>
+    </linearGradient>
+    <filter id="glow" x="-30%" y="-100%" width="160%" height="300%">
+      <feGaussianBlur stdDeviation="10"/>
+    </filter>
+    <filter id="soft" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="5"/>
+    </filter>
+
+    <linearGradient id="wall" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2B3442"/>
+      <stop offset="1" stop-color="#141A23"/>
+    </linearGradient>
+    <radialGradient id="top" cx="236" cy="286" r="150" gradientUnits="userSpaceOnUse"
+                    gradientTransform="translate(0 286) scale(1 0.36) translate(0 -286)">
+      <stop offset="0" stop-color="#3A4556"/>
+      <stop offset="1" stop-color="#161C26"/>
+    </radialGradient>
+
+    <linearGradient id="antL" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#F3F6FA"/>
+      <stop offset="1" stop-color="#9AA5B4"/>
+    </linearGradient>
+    <linearGradient id="antR" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#C9D1DC"/>
+      <stop offset="1" stop-color="#7C8796"/>
+    </linearGradient>
+
+    <clipPath id="clip">
+      <rect x="16" y="16" width="480" height="480" rx="112"/>
+    </clipPath>
+  </defs>
+
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#tile)"/>
+
+  <g clip-path="url(#clip)">
+    <ellipse cx="256" cy="372" rx="236" ry="92" fill="url(#spill)"/>
+
+    <!-- antennas: tapered blades with a hinge, behind the base -->
+    <path d="M206 284 L144 98 Q142 88 151 86 Q159 85 162 94 L226 282 Z" fill="url(#antL)"/>
+    <path d="M306 284 L368 98 Q370 88 361 86 Q353 85 350 94 L286 282 Z" fill="url(#antR)"/>
+    <circle cx="153" cy="92" r="12" fill="#22D3EE" filter="url(#soft)" opacity="0.9"/>
+    <circle cx="153" cy="92" r="6" fill="#CFFAFE"/>
+    <circle cx="359" cy="92" r="12" fill="#A78BFA" filter="url(#soft)" opacity="0.9"/>
+    <circle cx="359" cy="92" r="6" fill="#EDE9FE"/>
+    <ellipse cx="216" cy="284" rx="15" ry="6" fill="#0E1219"/>
+    <ellipse cx="296" cy="284" rx="15" ry="6" fill="#0E1219"/>
+
+    <!-- base: wall, light ring at the bottom rim, top face -->
+    <path d="M124 296 V330 A132 44 0 0 0 388 330 V296 Z" fill="url(#wall)"/>
+    <ellipse cx="256" cy="334" rx="132" ry="44" fill="none" stroke="url(#ring)"
+             stroke-width="18" filter="url(#glow)" opacity="0.95"/>
+    <path d="M124 330 A132 44 0 0 0 388 330" fill="none" stroke="url(#ring)"
+          stroke-width="7" stroke-linecap="round"/>
+    <ellipse cx="256" cy="296" rx="132" ry="44" fill="url(#top)"/>
+    <ellipse cx="256" cy="296" rx="131" ry="43" fill="none" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="2"/>
+
+    <!-- touch logo -->
+    <ellipse cx="256" cy="296" rx="26" ry="9" fill="none" stroke="#5B6575" stroke-width="3"/>
+  </g>
+
+  <rect x="17" y="17" width="478" height="478" rx="111" fill="none" stroke="url(#tileEdge)" stroke-width="2"/>
+</svg>

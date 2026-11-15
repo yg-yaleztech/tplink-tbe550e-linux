@@ -8,6 +8,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 SHARE=/usr/local/share/tplink-rgb-control
 BIN=/usr/local/bin/tplink-rgb-control
 DESKTOP=/usr/share/applications/tplink-rgb-control.desktop
+ICONS=/usr/share/icons/hicolor
 RULE=/etc/udev/rules.d/99-tplink-led.rules
 RESTORE=/usr/lib/tplink-led/restore
 STATE=/var/lib/tplink-led/mode
@@ -19,6 +20,8 @@ fi
 
 if [[ "${1:-}" == "--remove" ]]; then
     rm -rf "$SHARE" "$BIN" "$DESKTOP" "$RULE" "${RESTORE%/*}" "${STATE%/*}"
+    rm -f "$ICONS/scalable/apps/tplink-rgb-control.svg" "$ICONS/512x512/apps/tplink-rgb-control.png"
+    gtk-update-icon-cache -q -t "$ICONS" 2>/dev/null || true
     udevadm control --reload || true
     echo "Removed. The driver patch, if installed, is untouched."
     exit 0
@@ -28,6 +31,10 @@ install -Dm755 "$HERE/app/tplink_rgb_control.py" "$SHARE/tplink_rgb_control.py"
 install -Dm644 "$HERE/app/tplink-rgb.png" "$SHARE/tplink-rgb.png"
 ln -sf "$SHARE/tplink_rgb_control.py" "$BIN"
 install -Dm644 "$HERE/app/tplink-rgb-control.desktop" "$DESKTOP"
+# Themed icon, so menus, docks and desktop shortcuts all show the same one
+install -Dm644 "$HERE/app/icon.svg" "$ICONS/scalable/apps/tplink-rgb-control.svg"
+install -Dm644 "$HERE/app/tplink-rgb.png" "$ICONS/512x512/apps/tplink-rgb-control.png"
+gtk-update-icon-cache -q -t "$ICONS" 2>/dev/null || true
 
 install -Dm755 "$HERE/udev/tplink-led-restore" "$RESTORE"
 install -Dm644 "$HERE/udev/99-tplink-led.rules" "$RULE"

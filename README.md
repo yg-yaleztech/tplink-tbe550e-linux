@@ -27,10 +27,17 @@ The computer cannot set the colour.
 ## Requirements
 
 - TP-Link Archer TBE550E (PCI `14c3:7927`, subsystem `105b:e104`).
+  In TP-Link's Windows driver (`mtkwecx.inf`) this is the only card that uses
+  this LED scheme; other MT7925/MT7927 cards have no LED control, or (one AMD
+  MT7927, `14c3:0738`) a different scheme that is not implemented here. The
+  patch only activates on this card's IDs.
 - The [mediatek-mt7927-dkms](https://github.com/jetm/mediatek-mt7927-dkms)
-  driver, which adds MT7927 support to Linux. This patch applies on top of it.
-- **TP-Link's Wi-Fi firmware** (WM build 20250606). That driver extracts it
-  from the TP-Link/MediaTek Windows driver package by default. Other firmware
+  driver package. The patch targets its v2.17-2 tree (mt76 from Linux 7.3,
+  upstream commit `5467fd1`) and slots in as patch 05.
+- **TP-Link's Wi-Fi firmware** (WM build 20250606) for the steady effect.
+  mediatek-mt7927-dkms no longer installs Wi-Fi firmware; it can be extracted
+  from TP-Link's Windows driver package with that project's
+  `extract_firmware.py` and placed in `/lib/firmware/mediatek/mt7927/`. Other firmware
   builds can switch the light on and off but cannot make it steady.
 - Python 3 with PyQt5 for the app (`sudo apt install python3-pyqt5`).
 
@@ -39,17 +46,19 @@ The computer cannot set the colour.
 ### 1. Driver
 
 Copy the patch into a checkout of mediatek-mt7927-dkms and build its package
-as usual. Its build applies every `mt7927-wifi-*.patch` in the top directory.
+as usual. Its build applies every `mt7927-wifi-*.patch` in the top directory,
+in filename order; this one must come after 01-04 and before the `compat-`
+patches.
 
 ```
 git clone https://github.com/jetm/mediatek-mt7927-dkms.git
-cp patches/mt7927-wifi-20-add-tplink-tbe550e-led-support.patch mediatek-mt7927-dkms/
+cp patches/mt7927-wifi-05-add-tplink-tbe550e-antenna-led-support.patch mediatek-mt7927-dkms/
 cd mediatek-mt7927-dkms
 ./build-deb.sh                      # Debian/Ubuntu; Arch: makepkg -si
 sudo dpkg -i mediatek-mt7927-dkms_*_all.deb
 ```
 
-If the patch number 20 is already taken upstream, rename the file to the next
+If the number 05 is already taken upstream, rename the file to the next
 free number.
 
 After a reboot the kernel log should show:
