@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=TBE550E Antenna Light
+GenericName=Wi-Fi Antenna Light Control
+Comment=Control the antenna light of the TP-Link Archer TBE550E Wi-Fi 7 adapter
+Exec=/usr/local/bin/tplink-rgb-control
+Icon=/usr/local/share/tplink-rgb-control/tplink-rgb.png
+Terminal=false
+Categories=HardwareSettings;Settings;Utility;
+Keywords=wifi;rgb;led;tplink;archer;tbe550e;
+StartupNotify=true

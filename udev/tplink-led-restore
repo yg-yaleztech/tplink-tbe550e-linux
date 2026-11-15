@@ -1,0 +1,11 @@
+#!/bin/sh
+# Open the TBE550E LED sysfs nodes to users and apply the saved mode.
+# Called by udev with the PCI device or its net interface path.
+dev="$1"
+while [ "$dev" != /sys ] && [ ! -e "$dev/tplink_led_mode" ]; do dev=${dev%/*}; done
+[ -e "$dev/tplink_led_mode" ] || exit 0
+chmod 0666 "$dev/tplink_led_mode" "$dev/tplink_led_pins" 2>/dev/null
+mode=$(cat /var/lib/tplink-led/mode 2>/dev/null)
+case "$mode" in
+    0|1|2|3|auto) echo "$mode" > "$dev/tplink_led_mode" ;;
+esac

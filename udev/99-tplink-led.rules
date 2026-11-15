@@ -1,0 +1,5 @@
+# TP-Link Archer TBE550E antenna light: let desktop users change the LED mode
+# and restore the saved mode. The driver creates the LED nodes after "bind",
+# so the wlan interface "add" event is the one that reliably sees them.
+ACTION=="bind", SUBSYSTEM=="pci", DRIVER=="mt7925e", ATTR{subsystem_vendor}=="0x105b", ATTR{subsystem_device}=="0xe104", RUN+="/usr/lib/tplink-led/restore /sys%p"
+ACTION=="add", SUBSYSTEM=="net", DRIVERS=="mt7925e", ATTRS{subsystem_vendor}=="0x105b", ATTRS{subsystem_device}=="0xe104", RUN+="/usr/lib/tplink-led/restore /sys%p"
